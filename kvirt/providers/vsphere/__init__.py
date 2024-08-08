@@ -186,6 +186,7 @@ class Ksphere:
             imageobj, imagedc = findvmdc(si, rootFolder, image, self.dc)
             if self.esx:
                 imagepool = pool
+                imagedc = self.dc.name
             elif imageobj is None:
                 return {'result': 'failure', 'reason': f"Image {image} not found"}
             datastores = self._datastores_datacenters()
@@ -395,8 +396,15 @@ class Ksphere:
             self.set_networks()
         for index, net in enumerate(nets):
             netname = net['name'] if isinstance(net, dict) else net
+            mac = net['mac'] if isinstance(net, dict) and 'mac' in net else None
             if netname == 'default':
                 if image is not None:
+                    if mac is not None:
+                        currentnic = currentnics[index]
+                        currentnic.macAddress = mac
+                        currentnic.addressType = vim.vm.device.VirtualEthernetCardOption.MacTypes.manual
+                        nicspec = vim.vm.device.VirtualDeviceSpec(device=currentnic, operation="edit")
+                        devconfspec.append(nicspec)
                     continue
                 else:
                     netname = 'VM Network'
@@ -412,25 +420,30 @@ class Ksphere:
                         if self.portgs[dvsnet][0] == currentswitchuuid and\
                                 self.portgs[dvsnet][1] == currentportgroupkey:
                             currentnetwork = dvsnet
+                modified = False
                 if currentnetwork is None:
                     warning(f"Couldn't figure out network associated to nic {index}")
                 elif currentnetwork != netname:
+                    modified = True
                     if netname in self.portgs:
                         switchuuid = self.portgs[netname][0]
                         portgroupkey = self.portgs[netname][1]
                         currentnic.backing.port.switchUuid = switchuuid
                         currentnic.backing.port.portgroupKey = portgroupkey
                         currentnic.backing.port.portKey = None
-                        nicspec = vim.vm.device.VirtualDeviceSpec(device=currentnic, operation="edit")
-                        devconfspec.append(nicspec)
                     elif netname in self.networks:
                         currentnic.backing.deviceName = netname
-                        nicspec = vim.vm.device.VirtualDeviceSpec(device=currentnic, operation="edit")
-                        devconfspec.append(nicspec)
                     else:
                         return {'result': 'failure', 'reason': f"Invalid network {netname}"}
+                if mac is not None:
+                    modified = True
+                    currentnic.addressType = vim.vm.device.VirtualEthernetCardOption.MacTypes.manual
+                    currentnic.macAddress = mac
+                if modified:
+                    nicspec = vim.vm.device.VirtualDeviceSpec(device=currentnic, operation="edit")
+                    devconfspec.append(nicspec)
                 continue
-            nicname = 'Network Adapter %d' % (index + 1)
+            nicname = f'Network Adapter {index + 1}'
             nictype = net['type'] if isinstance(net, dict) and 'type' in net else None
             if netname in self.portgs:
                 switchuuid = self.portgs[netname][0]
